@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A private, five-second daily mood check-in.">
+    <meta name="theme-color" content="#100c0a">
+    <title>{{ title }} · Daily</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  </head>
+  <body data-page="{{ page }}">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="{{ url_for('check_in') }}" aria-label="Daily home">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span>Daily</span>
+      </a>
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <a href="{{ url_for('check_in') }}" {% if page == 'check-in' %}aria-current="page"{% endif %}>Check in</a>
+        <a href="{{ url_for('history') }}" {% if page == 'history' %}aria-current="page"{% endif %}>History</a>
+      </nav>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      {% if page == 'check-in' %}
+      <section class="page-intro" aria-labelledby="page-title">
+        <p class="eyebrow" id="today-label">Today</p>
+        <h1 id="page-title">How are you feeling?</h1>
+        <p>A quiet check-in for you. Pick the option that feels closest right now.</p>
+      </section>
+
+      <section class="card check-in-card" aria-labelledby="check-in-heading">
+        <div class="card-heading">
+          <div>
+            <h2 id="check-in-heading">Daily check-in</h2>
+            <p>There is no right or wrong answer.</p>
+          </div>
+          <span class="privacy-badge">Stored on this device</span>
+        </div>
+
+        <div id="already-checked-in" class="completion-state" tabindex="-1" hidden>
+          <span class="completion-icon" aria-hidden="true">✓</span>
+          <h3>Today’s check-in is saved</h3>
+          <p>You can look back at it in your private history.</p>
+          <a class="button button-secondary" href="{{ url_for('history') }}">View history</a>
+        </div>
+
+        <form id="check-in-form" novalidate>
+          <fieldset class="mood-fieldset">
+            <legend>Choose one mood <span aria-hidden="true">*</span></legend>
+            <div class="mood-grid">
+              <label class="mood-option">
+                <input type="radio" name="mood" value="very_happy" required>
+                <span class="mood-face" aria-hidden="true">😄</span>
+                <span>Very happy</span>
+              </label>
+              <label class="mood-option">
+                <input type="radio" name="mood" value="happy">
+                <span class="mood-face" aria-hidden="true">🙂</span>
+                <span>Happy</span>
+              </label>
+              <label class="mood-option">
+                <input type="radio" name="mood" value="neutral">
+                <span class="mood-face" aria-hidden="true">😐</span>
+                <span>Neutral</span>
+              </label>
+              <label class="mood-option">
+                <input type="radio" name="mood" value="sad">
+                <span class="mood-face" aria-hidden="true">🙁</span>
+                <span>Sad</span>
+              </label>
+              <label class="mood-option">
+                <input type="radio" name="mood" value="very_sad">
+                <span class="mood-face" aria-hidden="true">😞</span>
+                <span>Very sad</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div id="mood-error" class="field-error" role="alert" hidden>Please choose a mood before saving.</div>
+
+          <aside id="support-message" class="support-message" aria-labelledby="support-heading" hidden>
+            <div>
+              <h3 id="support-heading">You do not have to handle a difficult day alone</h3>
+              <p>If it would help, consider reaching out to someone you trust or a support service available to you.</p>
+            </div>
+            <button class="text-button" id="hide-support" type="button">Hide</button>
+          </aside>
+
+          <div class="field-group">
+            <div class="field-label-row">
+              <label for="mood-note">Add a note <span class="optional">Optional</span></label>
+              <span id="note-count" aria-live="polite">0 / 200</span>
+            </div>
+            <textarea
+              id="mood-note"
+              name="note"
+              rows="4"
+              maxlength="200"
+              aria-describedby="note-help note-count"
+              placeholder="What is on your mind?"
+            ></textarea>
+            <p class="field-help" id="note-help">Keep it brief and personal. Only this browser can read it.</p>
+          </div>
+
+          <div id="storage-error" class="message message-error" role="alert" hidden></div>
+          <div class="form-actions">
+            <button class="button button-primary" type="submit">Save today’s check-in</button>
+            <p class="privacy-note">No account, cloud upload or tracking.</p>
+          </div>
+        </form>
+      </section>
+      {% else %}
+      <section class="page-intro history-intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Your reflections</p>
+          <h1 id="page-title">Mood history</h1>
+          <p>Review your saved check-ins, newest first.</p>
+        </div>
+        <button id="clear-history" class="button button-danger" type="button" hidden>Clear history</button>
+      </section>
+
+      <section class="card history-card" aria-labelledby="history-heading">
+        <div class="card-heading">
+          <div>
+            <h2 id="history-heading">Saved on this device</h2>
+            <p id="entry-count">Loading your entries…</p>
+          </div>
+          <span class="privacy-badge">Private to this browser</span>
+        </div>
+
+        <div id="history-error" class="message message-error" role="alert" hidden></div>
+        <div id="history-empty" class="empty-state" hidden>
+          <span aria-hidden="true">○</span>
+          <h3>No check-ins yet</h3>
+          <p>Your saved moods will appear here after your first check-in.</p>
+          <a class="button button-primary" href="{{ url_for('check_in') }}">Make a check-in</a>
+        </div>
+        <ol id="history-list" class="history-list" aria-live="polite"></ol>
+      </section>
+
+      <p class="data-reminder">Deleting browser site data also removes this history. Daily cannot recover it because nothing is uploaded.</p>
+
+      <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="dialog-title">
+        <form method="dialog">
+          <h2 id="dialog-title">Delete saved check-ins?</h2>
+          <p id="dialog-message">This action cannot be undone.</p>
+          <div class="dialog-actions">
+            <button class="button button-secondary" value="cancel">Cancel</button>
+            <button class="button button-danger" id="confirm-delete" value="confirm">Delete</button>
+          </div>
+        </form>
+      </dialog>
+      {% endif %}
+    </main>
+
+    <footer class="site-footer">
+      <p>Daily stores mood entries only in this browser.</p>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

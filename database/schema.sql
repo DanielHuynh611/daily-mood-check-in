@@ -1,0 +1,6 @@
+-- Daily intentionally has no server-side database schema.
+--
+-- Mood entries are private, anonymous data stored only in the user's browser
+-- under the versioned localStorage key "daily.moodEntries.v1". The Flask
+-- service serves the web interface and never receives or stores mood entries.
+-- Clearing site data in the browser permanently removes the entries.

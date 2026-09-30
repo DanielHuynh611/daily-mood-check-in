@@ -1,0 +1,21 @@
+{
+  "function_ids": [
+    "capability_local_data_storage_a8c07941.function.create_mood_entry",
+    "capability_local_data_storage_a8c07941.function.list_mood_entries",
+    "capability_direct_to_check_in_screen_aad4329d.function.get_today_date",
+    "capability_save_mood_entry_d1f7c695.function.create_mood_entry",
+    "capability_optional_mood_note_f6774e1f.function.create_mood_entry",
+    "capability_optional_mood_note_f6774e1f.function.get_mood_entries",
+    "capability_five_mood_options_selection_fb56ebd0.function.get_mood_options",
+    "capability_five_mood_options_selection_fb56ebd0.function.create_mood_entry",
+    "capability_five_mood_options_selection_fb56ebd0.function.get_latest_mood_entry",
+    "capability_chronological_history_view_14184bae.function.get_mood_history"
+  ],
+  "project_slug": "daily",
+  "schema_version": "backend-package-source-manifest-v2",
+  "source": {
+    "architecture_id": "architecture:scope_daily_80dbef67:cb84b980811323959458e6c45d16c1fe809a913eae2ea3b34b9d045720d02c71",
+    "architecture_session_id": "da0786ca-5499-468c-9529-7055a04f4b27",
+    "architecture_source_hash": "cb84b980811323959458e6c45d16c1fe809a913eae2ea3b34b9d045720d02c71"
+  }
+}
