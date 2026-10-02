@@ -1,17 +1,22 @@
 import sqlite3
 
 import pytest
+from sqlalchemy.dialects import mysql
+from sqlalchemy.schema import CreateTable
 from werkzeug.security import check_password_hash
 
+from backend.database import mood_entries, users
 from fullstack import create_app
 
 
 @pytest.fixture
 def app(tmp_path):
+    database_path = tmp_path / "daily-test.db"
     return create_app(
         testing=True,
         config={
-            "DATABASE_PATH": str(tmp_path / "daily-test.db"),
+            "DATABASE_URL": f"sqlite+pysqlite:///{database_path}",
+            "TEST_DATABASE_PATH": str(database_path),
             "SECRET_KEY": "test-secret",
         },
     )
@@ -75,7 +80,7 @@ def test_registration_hashes_password_and_opens_check_in(client, app):
     assert b"How are you feeling?" in page.data
     assert b"student@example.com" in page.data
 
-    connection = sqlite3.connect(app.config["DATABASE_PATH"])
+    connection = sqlite3.connect(app.config["TEST_DATABASE_PATH"])
     password_hash = connection.execute(
         "SELECT password_hash FROM users WHERE email = ?",
         ("student@example.com",),
@@ -167,11 +172,11 @@ def test_entry_is_persisted_and_duplicate_day_is_rejected(client):
 def test_entry_survives_a_fresh_application_instance(client, app):
     register(client)
     create_entry(client)
-    database_path = app.config["DATABASE_PATH"]
+    database_url = app.config["DATABASE_URL"]
 
     restarted_client = create_app(
         testing=True,
-        config={"DATABASE_PATH": database_path, "SECRET_KEY": "test-secret"},
+        config={"DATABASE_URL": database_url, "SECRET_KEY": "test-secret"},
     ).test_client()
     restarted_client.get("/login")
     restarted_client.post(
@@ -268,3 +273,16 @@ def test_frontend_assets_are_served(client):
     assert b"prefers-reduced-motion" in stylesheet.data
     assert javascript.status_code == 200
     assert b"/api/entries" in javascript.data
+
+
+def test_schema_compiles_for_mysql():
+    users_ddl = str(CreateTable(users).compile(dialect=mysql.dialect()))
+    entries_ddl = str(CreateTable(mood_entries).compile(dialect=mysql.dialect()))
+
+    assert "BIGINT UNSIGNED" in users_ddl
+    assert "AUTO_INCREMENT" in users_ddl
+    assert "ENGINE=InnoDB" in users_ddl
+    assert "COLLATE utf8mb4_unicode_ci" in users_ddl
+    assert "CHAR(36)" in entries_ddl
+    assert "FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE" in entries_ddl
+    assert "UNIQUE (user_id, entry_date)" in entries_ddl

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 import secrets
-import sqlite3
 from datetime import UTC, date, datetime
 from functools import wraps
 from pathlib import Path
@@ -24,8 +23,10 @@ from flask import (
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.exc import IntegrityError
 
-from .database import get_database, initialise_database
+from .database import get_database, initialise_database, mood_entries, users
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -34,8 +35,8 @@ EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 MAX_NOTE_LENGTH = 200
 
 
-def utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+def utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -55,10 +56,11 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
         static_url_path="/static",
     )
     environment = os.getenv("DAILY_ENV", "development").strip().lower()
-    database_path = os.getenv(
-        "DATABASE_PATH",
-        str(PROJECT_ROOT / "instance" / "daily.db"),
-    )
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if testing and not database_url:
+        database_url = "sqlite+pysqlite:///:memory:"
+    elif not database_url:
+        raise RuntimeError("DATABASE_URL must be set")
     secret_key = os.getenv("SECRET_KEY", "")
     if testing:
         secret_key = secret_key or "daily-test-secret"
@@ -69,7 +71,7 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
 
     app.config.update(
         TESTING=bool(testing),
-        DATABASE_PATH=database_path,
+        DATABASE_URL=database_url,
         MAX_CONTENT_LENGTH=16 * 1024,
         SECRET_KEY=secret_key,
         SESSION_COOKIE_HTTPONLY=True,
@@ -78,6 +80,12 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     )
     if config:
         app.config.update(config)
+    if (
+        environment == "production"
+        and not testing
+        and not app.config["DATABASE_URL"].startswith("mysql+pymysql://")
+    ):
+        raise RuntimeError("Production DATABASE_URL must use mysql+pymysql")
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     initialise_database(app)
@@ -87,10 +95,12 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
         user_id = session.get("user_id")
         g.user = None
         if user_id is not None:
-            g.user = get_database().execute(
-                "SELECT id, email, created_at FROM users WHERE id = ?",
-                (user_id,),
-            ).fetchone()
+            with get_database().connect() as connection:
+                g.user = connection.execute(
+                    select(users.c.id, users.c.email, users.c.created_at).where(
+                        users.c.id == user_id
+                    )
+                ).mappings().first()
             if g.user is None:
                 session.clear()
 
@@ -142,18 +152,21 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
             confirm_password = request.form.get("confirm_password", "")
             error = validate_registration(email, password, confirm_password)
             if error is None:
-                database = get_database()
                 try:
-                    cursor = database.execute(
-                        "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-                        (email, generate_password_hash(password), utc_now()),
-                    )
-                    database.commit()
-                except sqlite3.IntegrityError:
+                    with get_database().begin() as connection:
+                        result = connection.execute(
+                            insert(users).values(
+                                email=email,
+                                password_hash=generate_password_hash(password),
+                                created_at=utc_now(),
+                            )
+                        )
+                        user_id = result.inserted_primary_key[0]
+                except IntegrityError:
                     error = "An account already exists for that email address."
                 else:
                     session.clear()
-                    session["user_id"] = cursor.lastrowid
+                    session["user_id"] = user_id
                     get_csrf_token()
                     return redirect(url_for("check_in"))
 
@@ -172,10 +185,12 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
 
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
-            user = get_database().execute(
-                "SELECT id, email, password_hash FROM users WHERE email = ? COLLATE NOCASE",
-                (email,),
-            ).fetchone()
+            with get_database().connect() as connection:
+                user = connection.execute(
+                    select(users.c.id, users.c.email, users.c.password_hash).where(
+                        func.lower(users.c.email) == email
+                    )
+                ).mappings().first()
             if user is None or not check_password_hash(user["password_hash"], password):
                 flash("Email or password is incorrect.", "error")
             else:
@@ -212,15 +227,21 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     @app.get("/api/entries")
     @api_login_required
     def list_entries():
-        rows = get_database().execute(
-            """
-            SELECT id, entry_date, mood, note, created_at
-            FROM mood_entries
-            WHERE user_id = ?
-            ORDER BY entry_date DESC, created_at DESC
-            """,
-            (g.user["id"],),
-        ).fetchall()
+        with get_database().connect() as connection:
+            rows = connection.execute(
+                select(
+                    mood_entries.c.id,
+                    mood_entries.c.entry_date,
+                    mood_entries.c.mood,
+                    mood_entries.c.note,
+                    mood_entries.c.created_at,
+                )
+                .where(mood_entries.c.user_id == g.user["id"])
+                .order_by(
+                    mood_entries.c.entry_date.desc(),
+                    mood_entries.c.created_at.desc(),
+                )
+            ).mappings().all()
         return jsonify({"entries": [serialise_entry(row) for row in rows]})
 
     @app.post("/api/entries")
@@ -246,17 +267,19 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
 
         entry_id = str(uuid4())
         created_at = utc_now()
-        database = get_database()
         try:
-            database.execute(
-                """
-                INSERT INTO mood_entries (id, user_id, entry_date, mood, note, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (entry_id, g.user["id"], entry_date, mood, note, created_at),
-            )
-            database.commit()
-        except sqlite3.IntegrityError:
+            with get_database().begin() as connection:
+                connection.execute(
+                    insert(mood_entries).values(
+                        id=entry_id,
+                        user_id=g.user["id"],
+                        entry_date=date.fromisoformat(entry_date),
+                        mood=mood,
+                        note=note,
+                        created_at=created_at,
+                    )
+                )
+        except IntegrityError:
             return jsonify({"error": "You already saved a check-in for that day."}), 409
 
         return (
@@ -267,7 +290,7 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
                         "entryDate": entry_date,
                         "mood": mood,
                         "note": note,
-                        "createdAt": created_at,
+                        "createdAt": serialise_datetime(created_at),
                     }
                 }
             ),
@@ -278,13 +301,14 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     @api_login_required
     @api_csrf_required
     def delete_entry(entry_id: str):
-        database = get_database()
-        cursor = database.execute(
-            "DELETE FROM mood_entries WHERE id = ? AND user_id = ?",
-            (entry_id, g.user["id"]),
-        )
-        database.commit()
-        if cursor.rowcount == 0:
+        with get_database().begin() as connection:
+            result = connection.execute(
+                delete(mood_entries).where(
+                    mood_entries.c.id == entry_id,
+                    mood_entries.c.user_id == g.user["id"],
+                )
+            )
+        if result.rowcount == 0:
             return jsonify({"error": "Check-in not found."}), 404
         return "", 204
 
@@ -292,12 +316,10 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     @api_login_required
     @api_csrf_required
     def clear_entries():
-        database = get_database()
-        database.execute(
-            "DELETE FROM mood_entries WHERE user_id = ?",
-            (g.user["id"],),
-        )
-        database.commit()
+        with get_database().begin() as connection:
+            connection.execute(
+                delete(mood_entries).where(mood_entries.c.user_id == g.user["id"])
+            )
         return "", 204
 
     @app.get("/health")
@@ -379,11 +401,15 @@ def validate_entry(entry_date: str, mood: str, note: str) -> str | None:
     return None
 
 
-def serialise_entry(row: sqlite3.Row) -> dict:
+def serialise_datetime(value: datetime) -> str:
+    return value.replace(tzinfo=UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def serialise_entry(row) -> dict:
     return {
         "id": row["id"],
-        "entryDate": row["entry_date"],
+        "entryDate": row["entry_date"].isoformat(),
         "mood": row["mood"],
         "note": row["note"],
-        "createdAt": row["created_at"],
+        "createdAt": serialise_datetime(row["created_at"]),
     }

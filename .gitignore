@@ -7,7 +7,3 @@ __pycache__/
 .coverage
 htmlcov/
 *.log
-instance/
-*.db
-*.db-shm
-*.db-wal

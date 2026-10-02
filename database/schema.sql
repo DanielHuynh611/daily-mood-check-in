@@ -1,28 +1,25 @@
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    email VARCHAR(254) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mood_entries (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    entry_date TEXT NOT NULL,
-    mood TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
+    id CHAR(36) NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    entry_date DATE NOT NULL,
+    mood VARCHAR(20) NOT NULL,
+    note VARCHAR(200) NOT NULL DEFAULT '',
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY ix_mood_entries_user_created (user_id, created_at DESC),
     CONSTRAINT fk_mood_entries_user
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
     CONSTRAINT uq_mood_entries_user_date UNIQUE (user_id, entry_date),
-    CONSTRAINT ck_mood_entries_date
-        CHECK (entry_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     CONSTRAINT ck_mood_entries_mood
         CHECK (mood IN ('very_happy', 'happy', 'neutral', 'sad', 'very_sad')),
-    CONSTRAINT ck_mood_entries_note_length CHECK (length(note) <= 200)
-);
-
-CREATE INDEX IF NOT EXISTS ix_mood_entries_user_created
-    ON mood_entries (user_id, created_at DESC);
+    CONSTRAINT ck_mood_entries_note_length CHECK (CHAR_LENGTH(note) <= 200)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

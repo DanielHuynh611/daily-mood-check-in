@@ -11,15 +11,48 @@ Daily is a small, privacy-focused web application for students who want to recor
 - Responsive, keyboard-accessible screens with reduced-motion support.
 - A gentle, dismissible support prompt after the most negative mood is selected.
 
-Passwords are stored as one-way hashes. Mood entries are stored in SQLite and are always queried through the signed-in user, so one account cannot read or delete another account's history.
+Passwords are stored as one-way hashes. Mood entries are stored in MySQL and are always queried through the signed-in user, so one account cannot read or delete another account's history.
 
 ## Technology
 
 - Python and Flask for server-rendered screens, signed sessions and JSON endpoints.
-- SQLite for account and mood-entry persistence.
+- SQLAlchemy Core and PyMySQL for database access.
+- MySQL 8 with InnoDB and `utf8mb4` for persistent account and mood-entry data.
 - Vanilla HTML, CSS and JavaScript for the interface.
 - Gunicorn and Nginx for an AWS EC2 deployment.
 - Pytest and GitHub Actions for automated checks.
+
+## MySQL setup
+
+Open MySQL as an administrator:
+
+```bash
+sudo mysql
+```
+
+Create the database and application user. Replace the example password with a strong URL-safe password:
+
+```sql
+CREATE DATABASE IF NOT EXISTS daily_app
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+CREATE USER IF NOT EXISTS 'appuser'@'localhost'
+  IDENTIFIED BY 'replace-with-a-secure-password';
+
+ALTER USER 'appuser'@'localhost'
+  IDENTIFIED BY 'replace-with-a-secure-password';
+
+GRANT ALL PRIVILEGES ON daily_app.* TO 'appuser'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+Apply the schema:
+
+```bash
+mysql -u appuser -p daily_app < database/schema.sql
+```
 
 ## Run locally
 
@@ -30,10 +63,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+export DATABASE_URL='mysql+pymysql://appuser:YOUR_PASSWORD@127.0.0.1/daily_app'
+export SECRET_KEY='development-secret-change-me'
 flask --app 'fullstack:create_app()' run --debug
 ```
 
-Open <http://127.0.0.1:5000>. The SQLite database is created automatically at `instance/daily.db`. The health check is available at <http://127.0.0.1:5000/health>.
+Open <http://127.0.0.1:5000>. The health check is available at <http://127.0.0.1:5000/health>.
 
 On Windows PowerShell, activate the environment with:
 
@@ -48,14 +83,16 @@ source .venv/bin/activate
 pytest -q
 ```
 
+The test suite uses an isolated database adapter and does not alter the development or production MySQL database.
+
 ## Project structure
 
 ```text
 fullstack.py             Canonical Flask application entry point
-backend/                 Application factory and SQLite persistence boundary
+backend/                 Application factory and SQLAlchemy persistence boundary
 frontend/templates/      Authentication, check-in and history templates
 frontend/static/         Vanilla CSS and JavaScript
-database/schema.sql      Users and mood-entry schema
+database/schema.sql      MySQL users and mood-entry schema
 deploy/                  Systemd and Nginx production templates
 docs/zorentia-generation Historical generator reports and manifest
 tests/                   Authentication, API and frontend contract tests
@@ -66,29 +103,30 @@ wsgi.py                  Compatibility WSGI entry point
 
 Daily reads the following environment variables:
 
-| Variable | Purpose | Local default |
+| Variable | Purpose | Requirement |
 | --- | --- | --- |
-| `DAILY_ENV` | Set to `production` on EC2 | `development` |
-| `SECRET_KEY` | Signs authentication sessions; required in production | Development-only value |
-| `DATABASE_PATH` | Absolute SQLite database location | `instance/daily.db` |
-| `SESSION_COOKIE_SECURE` | Restricts the session cookie to HTTPS | `false` |
+| `DAILY_ENV` | Set to `production` on EC2 | Optional locally |
+| `SECRET_KEY` | Signs authentication sessions | Required in production |
+| `DATABASE_URL` | SQLAlchemy MySQL connection URL | Required |
+| `SESSION_COOKIE_SECURE` | Restricts the session cookie to HTTPS | Enable after HTTPS setup |
+
+If the database password contains URL-reserved characters, percent-encode it before placing it in `DATABASE_URL`.
 
 ## Deploy to AWS EC2
 
-The supplied files target an Ubuntu EC2 instance. The database is stored outside the Git working copy at `/var/lib/daily/daily.db`, so pulling a new release does not replace account data.
+The supplied files target an Ubuntu EC2 instance with MySQL installed on the same server.
 
 ### 1. Prepare the instance
 
-Configure the EC2 security group to allow SSH (`22`) only from a trusted administrator IP, HTTP (`80`) for initial setup, and HTTPS (`443`) before public use. Then install the runtime packages:
+Configure the EC2 security group to allow SSH (`22`) only from a trusted administrator IP, HTTP (`80`) for initial setup, and HTTPS (`443`) before public use. Do not expose MySQL port `3306` publicly.
 
 ```bash
 sudo apt update
-sudo apt install -y git nginx python3-venv openssl
+sudo apt install -y git nginx mysql-server python3-venv openssl
+sudo systemctl enable --now mysql
 ```
 
 ### 2. Install the application
-
-Clone the repository to `/opt/daily`, create the environment and run the tests:
 
 ```bash
 sudo mkdir -p /opt/daily
@@ -102,10 +140,19 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-Create a production secret with `openssl rand -hex 32`. Then create `/etc/daily.env` as root with permissions `600` and the following content:
+Create the database and user using the earlier MySQL setup commands, then apply `database/schema.sql`.
+
+Generate the Flask session secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Create `/etc/daily.env` as root with permissions `600`:
 
 ```dotenv
 SECRET_KEY=replace-with-the-generated-secret
+DATABASE_URL=mysql+pymysql://appuser:YOUR_DATABASE_PASSWORD@127.0.0.1/daily_app
 SESSION_COOKIE_SECURE=false
 ```
 
@@ -124,7 +171,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Systemd creates `/var/lib/daily` for the application. Starting the service creates the database schema automatically. Verify the public endpoint with:
+Verify the public endpoint:
 
 ```bash
 curl http://YOUR_EC2_PUBLIC_IP/health
@@ -142,7 +189,7 @@ sudo systemctl restart daily
 
 ```bash
 cd /opt/daily
-sudo -u ubuntu git pull --ff-only
+sudo -u ubuntu git pull --ff-only origin main
 source .venv/bin/activate
 pip install -r requirements.txt
 pytest -q
@@ -158,19 +205,15 @@ journalctl -u daily -n 100 --no-pager
 
 ### Backing up persistent data
 
-Stop the service briefly, copy the database to a protected backup location, and restart it:
-
 ```bash
-sudo systemctl stop daily
-sudo cp /var/lib/daily/daily.db /var/lib/daily/daily-backup.db
-sudo systemctl start daily
+mysqldump -u appuser -p --single-transaction daily_app > daily-app-backup.sql
 ```
 
-Do not commit the database or `/etc/daily.env` to Git.
+Do not commit database backups or `/etc/daily.env` to Git.
 
 ## Privacy and limitations
 
-- Daily stores email addresses and mood entries on the application server.
+- Daily stores email addresses and mood entries in the application database.
 - The current version does not include email verification or password recovery.
 - Users can delete individual entries or clear their mood history; account deletion is not currently included.
 - Daily is a reflection tool, not a medical or crisis-support service.

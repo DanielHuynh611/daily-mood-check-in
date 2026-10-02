@@ -1,46 +1,86 @@
-"""Small SQLite persistence boundary for Daily."""
+"""SQLAlchemy Core persistence definitions for Daily."""
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
-from flask import current_app, g
-
-
-def connect_database(path: str) -> sqlite3.Connection:
-    connection = sqlite3.connect(path, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
-    if path != ":memory:":
-        connection.execute("PRAGMA journal_mode = WAL")
-    return connection
-
-
-def get_database() -> sqlite3.Connection:
-    if "database" not in g:
-        g.database = connect_database(current_app.config["DATABASE_PATH"])
-    return g.database
+from flask import current_app
+from sqlalchemy import (
+    CheckConstraint,
+    CHAR,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    UniqueConstraint,
+    create_engine,
+)
+from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy.engine import Engine
 
 
-def close_database(_error: BaseException | None = None) -> None:
-    connection = g.pop("database", None)
-    if connection is not None:
-        connection.close()
+metadata = MetaData()
+user_id_type = BIGINT(unsigned=True).with_variant(Integer, "sqlite")
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", user_id_type, primary_key=True, autoincrement=True),
+    Column("email", String(254), nullable=False, unique=True),
+    Column("password_hash", String(255), nullable=False),
+    Column("created_at", DateTime(), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
+
+mood_entries = Table(
+    "mood_entries",
+    metadata,
+    Column("id", CHAR(36), primary_key=True),
+    Column(
+        "user_id",
+        user_id_type,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("entry_date", Date(), nullable=False),
+    Column("mood", String(20), nullable=False),
+    Column("note", String(200), nullable=False, server_default=""),
+    Column("created_at", DateTime(), nullable=False),
+    UniqueConstraint("user_id", "entry_date", name="uq_mood_entries_user_date"),
+    CheckConstraint(
+        "mood IN ('very_happy', 'happy', 'neutral', 'sad', 'very_sad')",
+        name="ck_mood_entries_mood",
+    ),
+    CheckConstraint(
+        "CHAR_LENGTH(note) <= 200",
+        name="ck_mood_entries_note_length",
+    ).ddl_if(dialect="mysql"),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
+
+Index(
+    "ix_mood_entries_user_created",
+    mood_entries.c.user_id,
+    mood_entries.c.created_at.desc(),
+)
+
+
+def get_database() -> Engine:
+    return current_app.extensions["daily_database_engine"]
 
 
 def initialise_database(app) -> None:
-    database_path = app.config["DATABASE_PATH"]
-    if database_path != ":memory:":
-        Path(database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-
-    schema_path = Path(app.root_path).parent / "database" / "schema.sql"
-    connection = connect_database(database_path)
-    try:
-        connection.executescript(schema_path.read_text(encoding="utf-8"))
-        connection.commit()
-    finally:
-        connection.close()
-
-    app.teardown_appcontext(close_database)
+    engine = create_engine(
+        app.config["DATABASE_URL"],
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
+    metadata.create_all(engine)
+    app.extensions["daily_database_engine"] = engine
