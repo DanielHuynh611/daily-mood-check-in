@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Sign in to the Daily mood check-in.">
+    <meta name="theme-color" content="#100c0a">
+    <title>{{ title }} · Daily</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header auth-header">
+      <a class="brand" href="{{ url_for('login') }}" aria-label="Daily home">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span>Daily</span>
+      </a>
+    </header>
+
+    <main id="main-content" class="page-shell auth-shell">
+      <section class="page-intro" aria-labelledby="page-title">
+        <p class="eyebrow">A five-second reflection</p>
+        {% if mode == 'register' %}
+        <h1 id="page-title">Create your account</h1>
+        <p>Keep your daily mood history available whenever you return.</p>
+        {% else %}
+        <h1 id="page-title">Welcome back</h1>
+        <p>Log in to make today’s check-in or review your history.</p>
+        {% endif %}
+      </section>
+
+      <section class="card auth-card" aria-label="{{ title }} form">
+        {% for category, message in get_flashed_messages(with_categories=true) %}
+        <div class="message message-{{ category }}" role="alert">{{ message }}</div>
+        {% endfor %}
+
+        <form method="post" novalidate>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field-group">
+            <label for="email">Email address</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value="{{ request.form.get('email', '') }}"
+              maxlength="254"
+              autocomplete="email"
+              required
+            >
+          </div>
+          <div class="field-group">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              minlength="8"
+              maxlength="128"
+              autocomplete="{% if mode == 'register' %}new-password{% else %}current-password{% endif %}"
+              required
+            >
+            {% if mode == 'register' %}
+            <p class="field-help">Use at least 8 characters.</p>
+            {% endif %}
+          </div>
+          {% if mode == 'register' %}
+          <div class="field-group">
+            <label for="confirm-password">Confirm password</label>
+            <input
+              id="confirm-password"
+              name="confirm_password"
+              type="password"
+              minlength="8"
+              maxlength="128"
+              autocomplete="new-password"
+              required
+            >
+          </div>
+          {% endif %}
+          <button class="button button-primary auth-submit" type="submit">
+            {% if mode == 'register' %}Create account{% else %}Log in{% endif %}
+          </button>
+        </form>
+
+        <p class="auth-switch">
+          {% if mode == 'register' %}
+          Already have an account? <a href="{{ url_for('login') }}">Log in</a>.
+          {% else %}
+          New to Daily? <a href="{{ url_for('register') }}">Create an account</a>.
+          {% endif %}
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Daily is a reflection tool, not a medical or crisis-support service.</p>
+    </footer>
+  </body>
+</html>

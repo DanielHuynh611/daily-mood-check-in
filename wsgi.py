@@ -1,5 +1,5 @@
-"""Gunicorn entry point."""
+"""Compatibility entry point for WSGI servers."""
 
-from backend import create_app
+from fullstack import create_app
 
 app = create_app()

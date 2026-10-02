@@ -1,6 +1,5 @@
 "use strict";
 
-const STORAGE_KEY = "daily.moodEntries.v1";
 const MAX_NOTE_LENGTH = 200;
 const MOODS = Object.freeze({
   very_happy: { label: "Very happy", face: "😄" },
@@ -17,35 +16,30 @@ function localDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function validEntry(value) {
-  return Boolean(
-    value &&
-      typeof value.id === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(value.entryDate) &&
-      Object.hasOwn(MOODS, value.mood) &&
-      typeof value.note === "string" &&
-      value.note.length <= MAX_NOTE_LENGTH &&
-      typeof value.createdAt === "string" &&
-      !Number.isNaN(Date.parse(value.createdAt)),
-  );
+async function apiRequest(path, options = {}) {
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+  const headers = new Headers(options.headers || {});
+  if (options.body) headers.set("Content-Type", "application/json");
+  if (options.method && options.method !== "GET" && csrfToken) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
+
+  const response = await fetch(path, { ...options, headers });
+  if (response.status === 401) {
+    window.location.assign("/login");
+    throw new Error("Your session ended. Please log in again.");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Daily could not complete that request.");
+  }
+  if (response.status === 204) return null;
+  return response.json();
 }
 
-function readEntries() {
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return [];
-
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) throw new Error("Saved history has an invalid format.");
-  return parsed.filter(validEntry);
-}
-
-function writeEntries(entries) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-}
-
-function createId() {
-  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+async function readEntries() {
+  const payload = await apiRequest("/api/entries");
+  return payload.entries;
 }
 
 function showToast(message) {
@@ -77,7 +71,7 @@ function formatSavedTime(isoDate) {
   }).format(date);
 }
 
-function initialiseCheckIn() {
+async function initialiseCheckIn() {
   const form = document.querySelector("#check-in-form");
   if (!form) return;
 
@@ -96,13 +90,14 @@ function initialiseCheckIn() {
   }).format(new Date());
 
   try {
-    const existing = readEntries().some((entry) => entry.entryDate === localDateKey());
+    const entries = await readEntries();
+    const existing = entries.some((entry) => entry.entryDate === localDateKey());
     if (existing) {
       form.hidden = true;
       alreadyCheckedIn.hidden = false;
     }
   } catch (error) {
-    showError(storageError, "Daily could not read this browser’s saved history. You may need to clear this site’s data.");
+    showError(storageError, error.message || "Daily could not load your account history.");
   }
 
   note.addEventListener("input", () => {
@@ -119,7 +114,7 @@ function initialiseCheckIn() {
     supportMessage.hidden = true;
   });
 
-  form.addEventListener("submit", (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     storageError.hidden = true;
 
@@ -138,30 +133,20 @@ function initialiseCheckIn() {
     }
 
     try {
-      const entries = readEntries();
-      if (entries.some((entry) => entry.entryDate === localDateKey())) {
-        form.hidden = true;
-        alreadyCheckedIn.hidden = false;
-        return;
-      }
-
-      entries.push({
-        id: createId(),
-        entryDate: localDateKey(),
-        mood: selected,
-        note: cleanNote,
-        createdAt: new Date().toISOString(),
+      await apiRequest("/api/entries", {
+        method: "POST",
+        body: JSON.stringify({
+          entryDate: localDateKey(),
+          mood: selected,
+          note: cleanNote,
+        }),
       });
-      writeEntries(entries);
       form.hidden = true;
       alreadyCheckedIn.hidden = false;
       alreadyCheckedIn.focus();
-      showToast("Today’s check-in was saved on this device.");
+      showToast("Today’s check-in was saved to your account.");
     } catch (error) {
-      showError(
-        storageError,
-        "Daily could not save this check-in. Check that browser storage is available and try again.",
-      );
+      showError(storageError, error.message || "Daily could not save this check-in. Try again.");
     }
   });
 }
@@ -214,10 +199,10 @@ function initialiseHistory() {
   const dialogMessage = document.querySelector("#dialog-message");
   let pendingDelete = null;
 
-  function render() {
+  async function render() {
     errorRegion.hidden = true;
     try {
-      const entries = readEntries().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const entries = await readEntries();
       list.replaceChildren(...entries.map(makeHistoryEntry));
       empty.hidden = entries.length > 0;
       clearButton.hidden = entries.length === 0;
@@ -227,7 +212,7 @@ function initialiseHistory() {
       empty.hidden = true;
       clearButton.hidden = true;
       count.textContent = "History unavailable";
-      showError(errorRegion, "Daily could not read this browser’s saved history.");
+      showError(errorRegion, error.message || "Daily could not load your account history.");
     }
   }
 
@@ -236,7 +221,7 @@ function initialiseHistory() {
     const deletingAll = target === "all";
     dialogTitle.textContent = deletingAll ? "Clear all history?" : "Delete this check-in?";
     dialogMessage.textContent = deletingAll
-      ? "Every saved check-in in this browser will be permanently removed."
+      ? "Every saved check-in in your account will be permanently removed."
       : "This saved check-in will be permanently removed.";
     dialog.showModal();
   }
@@ -247,7 +232,7 @@ function initialiseHistory() {
     if (button) openConfirmation(button.dataset.entryId);
   });
 
-  dialog.addEventListener("close", () => {
+  dialog.addEventListener("close", async () => {
     if (dialog.returnValue !== "confirm" || !pendingDelete) {
       pendingDelete = null;
       return;
@@ -255,21 +240,20 @@ function initialiseHistory() {
 
     try {
       if (pendingDelete === "all") {
-        window.localStorage.removeItem(STORAGE_KEY);
+        await apiRequest("/api/entries", { method: "DELETE" });
         showToast("Mood history was cleared.");
       } else {
-        writeEntries(readEntries().filter((entry) => entry.id !== pendingDelete));
+        await apiRequest(`/api/entries/${encodeURIComponent(pendingDelete)}`, { method: "DELETE" });
         showToast("Check-in deleted.");
       }
-      render();
+      await render();
     } catch (error) {
-      showError(errorRegion, "Daily could not update this browser’s saved history.");
+      showError(errorRegion, error.message || "Daily could not update your account history.");
     } finally {
       pendingDelete = null;
     }
   });
 
-  window.addEventListener("storage", render);
   render();
 }
 

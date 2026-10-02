@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="A private, five-second daily mood check-in.">
     <meta name="theme-color" content="#100c0a">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ title }} · Daily</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
@@ -21,6 +22,13 @@
         <a href="{{ url_for('check_in') }}" {% if page == 'check-in' %}aria-current="page"{% endif %}>Check in</a>
         <a href="{{ url_for('history') }}" {% if page == 'history' %}aria-current="page"{% endif %}>History</a>
       </nav>
+      <div class="account-menu">
+        <span title="Signed-in account">{{ current_user['email'] }}</span>
+        <form action="{{ url_for('logout') }}" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="text-button" type="submit">Log out</button>
+        </form>
+      </div>
     </header>
 
     <main id="main-content" class="page-shell">
@@ -37,13 +45,13 @@
             <h2 id="check-in-heading">Daily check-in</h2>
             <p>There is no right or wrong answer.</p>
           </div>
-          <span class="privacy-badge">Stored on this device</span>
+          <span class="privacy-badge">Saved to your account</span>
         </div>
 
         <div id="already-checked-in" class="completion-state" tabindex="-1" hidden>
           <span class="completion-icon" aria-hidden="true">✓</span>
           <h3>Today’s check-in is saved</h3>
-          <p>You can look back at it in your private history.</p>
+          <p>You can look back at it in your account history.</p>
           <a class="button button-secondary" href="{{ url_for('history') }}">View history</a>
         </div>
 
@@ -102,13 +110,13 @@
               aria-describedby="note-help note-count"
               placeholder="What is on your mind?"
             ></textarea>
-            <p class="field-help" id="note-help">Keep it brief and personal. Only this browser can read it.</p>
+            <p class="field-help" id="note-help">Keep it brief and personal. Your entry is private to your account.</p>
           </div>
 
           <div id="storage-error" class="message message-error" role="alert" hidden></div>
           <div class="form-actions">
             <button class="button button-primary" type="submit">Save today’s check-in</button>
-            <p class="privacy-note">No account, cloud upload or tracking.</p>
+            <p class="privacy-note">Stored securely with your signed-in account.</p>
           </div>
         </form>
       </section>
@@ -128,7 +136,7 @@
             <h2 id="history-heading">Saved on this device</h2>
             <p id="entry-count">Loading your entries…</p>
           </div>
-          <span class="privacy-badge">Private to this browser</span>
+          <span class="privacy-badge">Private to your account</span>
         </div>
 
         <div id="history-error" class="message message-error" role="alert" hidden></div>
@@ -141,7 +149,7 @@
         <ol id="history-list" class="history-list" aria-live="polite"></ol>
       </section>
 
-      <p class="data-reminder">Deleting browser site data also removes this history. Daily cannot recover it because nothing is uploaded.</p>
+      <p class="data-reminder">Your history remains available after you log out. Always log out when using a shared device.</p>
 
       <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="dialog-title">
         <form method="dialog">
@@ -157,7 +165,7 @@
     </main>
 
     <footer class="site-footer">
-      <p>Daily stores mood entries only in this browser.</p>
+      <p>Daily keeps each account’s mood entries separate and private.</p>
     </footer>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

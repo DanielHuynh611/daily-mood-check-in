@@ -8,7 +8,12 @@ User=ubuntu
 Group=www-data
 WorkingDirectory=/opt/daily
 Environment="PATH=/opt/daily/.venv/bin"
-ExecStart=/opt/daily/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 --access-logfile - --error-logfile - wsgi:app
+Environment="DAILY_ENV=production"
+Environment="DATABASE_PATH=/var/lib/daily/daily.db"
+EnvironmentFile=/etc/daily.env
+StateDirectory=daily
+UMask=0077
+ExecStart=/opt/daily/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 --access-logfile - --error-logfile - fullstack:create_app()
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -16,6 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
+ReadWritePaths=/var/lib/daily
 
 [Install]
 WantedBy=multi-user.target
