@@ -21,6 +21,7 @@ from flask import (
     session,
     url_for,
 )
+from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from sqlalchemy import delete, func, insert, select
@@ -49,6 +50,10 @@ def env_flag(name: str, default: bool = False) -> bool:
 def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     """Create and configure the Daily web application."""
 
+    # Load the repository-level deployment file used by the Zorentia EC2 guide.
+    # Existing shell or systemd variables take precedence over values in .env.
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+
     app = Flask(
         __name__,
         template_folder=str(PROJECT_ROOT / "frontend" / "templates"),
@@ -61,17 +66,21 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
         database_url = "sqlite+pysqlite:///:memory:"
     elif not database_url:
         raise RuntimeError("DATABASE_URL must be set")
-    secret_key = os.getenv("SECRET_KEY", "")
+    secret_key = os.getenv("JWT_SECRET", "").strip() or os.getenv(
+        "SECRET_KEY", ""
+    ).strip()
     if testing:
         secret_key = secret_key or "daily-test-secret"
     elif environment == "production" and not secret_key:
-        raise RuntimeError("SECRET_KEY must be set when DAILY_ENV=production")
+        raise RuntimeError("JWT_SECRET must be set when DAILY_ENV=production")
     else:
         secret_key = secret_key or "daily-development-secret-change-me"
 
     app.config.update(
         TESTING=bool(testing),
         DATABASE_URL=database_url,
+        JWT_ISSUER=os.getenv("JWT_ISSUER", "zorentia-app").strip()
+        or "zorentia-app",
         MAX_CONTENT_LENGTH=16 * 1024,
         SECRET_KEY=secret_key,
         SESSION_COOKIE_HTTPONLY=True,
@@ -83,9 +92,13 @@ def create_app(testing: bool = False, config: dict | None = None) -> Flask:
     if (
         environment == "production"
         and not testing
-        and not app.config["DATABASE_URL"].startswith("mysql+pymysql://")
+        and not app.config["DATABASE_URL"].startswith(
+            "mysql+mysqlconnector://"
+        )
     ):
-        raise RuntimeError("Production DATABASE_URL must use mysql+pymysql")
+        raise RuntimeError(
+            "Production DATABASE_URL must use mysql+mysqlconnector"
+        )
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     initialise_database(app)

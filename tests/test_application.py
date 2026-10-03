@@ -286,3 +286,19 @@ def test_schema_compiles_for_mysql():
     assert "CHAR(36)" in entries_ddl
     assert "FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE" in entries_ddl
     assert "UNIQUE (user_id, entry_date)" in entries_ddl
+
+
+def test_zorentia_environment_names_are_supported(tmp_path, monkeypatch):
+    database_path = tmp_path / "zorentia-env.db"
+    monkeypatch.setenv(
+        "DATABASE_URL", f"sqlite+pysqlite:///{database_path}"
+    )
+    monkeypatch.setenv("JWT_SECRET", "zorentia-test-secret")
+    monkeypatch.setenv("JWT_ISSUER", "zorentia-app")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+
+    app = create_app(testing=True)
+
+    assert app.config["SECRET_KEY"] == "zorentia-test-secret"
+    assert app.config["JWT_ISSUER"] == "zorentia-app"
+    app.extensions["daily_database_engine"].dispose()

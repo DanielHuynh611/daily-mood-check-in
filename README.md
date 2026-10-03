@@ -16,7 +16,7 @@ Passwords are stored as one-way hashes. Mood entries are stored in MySQL and are
 ## Technology
 
 - Python and Flask for server-rendered screens, signed sessions and JSON endpoints.
-- SQLAlchemy Core and PyMySQL for database access.
+- SQLAlchemy Core and MySQL Connector/Python for database access.
 - MySQL 8 with InnoDB and `utf8mb4` for persistent account and mood-entry data.
 - Vanilla HTML, CSS and JavaScript for the interface.
 - Gunicorn and Nginx for an AWS EC2 deployment.
@@ -33,17 +33,14 @@ sudo mysql
 Create the database and application user. Replace the example password with a strong URL-safe password:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS daily_app
+CREATE DATABASE IF NOT EXISTS `app-db`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
 CREATE USER IF NOT EXISTS 'appuser'@'localhost'
   IDENTIFIED BY 'replace-with-a-secure-password';
 
-ALTER USER 'appuser'@'localhost'
-  IDENTIFIED BY 'replace-with-a-secure-password';
-
-GRANT ALL PRIVILEGES ON daily_app.* TO 'appuser'@'localhost';
+GRANT ALL PRIVILEGES ON `app-db`.* TO 'appuser'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 ```
@@ -51,7 +48,7 @@ EXIT;
 Apply the schema:
 
 ```bash
-mysql -u appuser -p daily_app < database/schema.sql
+mysql -u appuser -p app-db < database/schema.sql
 ```
 
 ## Run locally
@@ -63,8 +60,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-export DATABASE_URL='mysql+pymysql://appuser:YOUR_PASSWORD@127.0.0.1/daily_app'
-export SECRET_KEY='development-secret-change-me'
+cp .env.example .env
+# Edit .env and replace DATABASE_PASSWORD and the example JWT secret.
 flask --app 'fullstack:create_app()' run --debug
 ```
 
@@ -106,7 +103,8 @@ Daily reads the following environment variables:
 | Variable | Purpose | Requirement |
 | --- | --- | --- |
 | `DAILY_ENV` | Set to `production` on EC2 | Optional locally |
-| `SECRET_KEY` | Signs authentication sessions | Required in production |
+| `JWT_SECRET` | Signs authentication sessions | Required in production |
+| `JWT_ISSUER` | Deployment identity expected by the Zorentia workflow | Defaults to `zorentia-app` |
 | `DATABASE_URL` | SQLAlchemy MySQL connection URL | Required |
 | `SESSION_COOKIE_SECURE` | Restricts the session cookie to HTTPS | Enable after HTTPS setup |
 
@@ -129,10 +127,9 @@ sudo systemctl enable --now mysql
 ### 2. Install the application
 
 ```bash
-sudo mkdir -p /opt/daily
-sudo chown ubuntu:www-data /opt/daily
-git clone git@github.com:DanielHuynh611/daily-mood-check-in.git /opt/daily
-cd /opt/daily
+cd ~
+git clone git@github.com:DanielHuynh611/daily-mood-check-in.git
+cd ~/daily-mood-check-in
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -148,15 +145,21 @@ Generate the Flask session secret:
 openssl rand -hex 32
 ```
 
-Create `/etc/daily.env` as root with permissions `600`:
+Create the repository-level `.env` file used by the Zorentia workflow:
 
 ```dotenv
-SECRET_KEY=replace-with-the-generated-secret
-DATABASE_URL=mysql+pymysql://appuser:YOUR_DATABASE_PASSWORD@127.0.0.1/daily_app
-SESSION_COOKIE_SECURE=false
+DATABASE_URL=mysql+mysqlconnector://appuser:YOUR_DATABASE_PASSWORD@localhost:3306/app-db
+JWT_SECRET=replace-with-the-generated-secret
+JWT_ISSUER=zorentia-app
 ```
 
-Keep `SESSION_COOKIE_SECURE=false` only during the initial HTTP smoke test. Change it to `true` after HTTPS is enabled.
+Protect it from other users:
+
+```bash
+chmod 600 .env
+```
+
+`SESSION_COOKIE_SECURE` defaults to `false` for the initial HTTP smoke test. Add `SESSION_COOKIE_SECURE=true` after HTTPS is enabled.
 
 ### 3. Enable Gunicorn and Nginx
 
@@ -179,7 +182,7 @@ curl http://YOUR_EC2_PUBLIC_IP/health
 
 ### 4. Add HTTPS before public use
 
-Point a domain at the instance, replace `_` in `deploy/nginx.conf` with that domain, and use an ACME client such as Certbot to issue and renew a TLS certificate. Set `SESSION_COOKIE_SECURE=true` in `/etc/daily.env`, then restart Daily:
+Point a domain at the instance, replace `_` in `deploy/nginx.conf` with that domain, and use an ACME client such as Certbot to issue and renew a TLS certificate. Add `SESSION_COOKIE_SECURE=true` to `.env`, then restart Daily:
 
 ```bash
 sudo systemctl restart daily
@@ -188,8 +191,8 @@ sudo systemctl restart daily
 ### Updating the deployment
 
 ```bash
-cd /opt/daily
-sudo -u ubuntu git pull --ff-only origin main
+cd ~/daily-mood-check-in
+git pull --ff-only origin main
 source .venv/bin/activate
 pip install -r requirements.txt
 pytest -q
@@ -206,10 +209,10 @@ journalctl -u daily -n 100 --no-pager
 ### Backing up persistent data
 
 ```bash
-mysqldump -u appuser -p --single-transaction daily_app > daily-app-backup.sql
+mysqldump -u appuser -p --single-transaction app-db > daily-app-backup.sql
 ```
 
-Do not commit database backups or `/etc/daily.env` to Git.
+Do not commit database backups or `.env` to Git.
 
 ## Privacy and limitations
 
